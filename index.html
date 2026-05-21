@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Simon Says</title>
+  <script src="https://sdk.minepi.com/pi-sdk.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #0a0a0f; }
+    @keyframes flashAnim { 0% { opacity: 1; } 100% { opacity: 0; } }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useRef, useCallback, useEffect } = React;
+
+    const JSONBIN_KEY = "$2a$10$7giGEp4yOwdss/md6Nv7luYEkPqoDriT2cgTTaQenrB00xD0980nW";
+    const BIN_ID = "6a0cc935ee5a733b12e7bc2f";
+
+    async function fetchLeaderboard() {
+      try {
+        const res = await fetch("https://api.jsonbin.io/v3/b/" + BIN_ID + "/latest", {
+          headers: { "X-Master-Key": JSONBIN_KEY },
+        });
+        const data = await res.json();
+        return data.record.scores || [];
+      } catch(e) { return null; }
+    }
+
+    async function saveLeaderboard(scores) {
+      try {
+        await fetch("https://api.jsonbin.io/v3/b/" + BIN_ID, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", "X-Master-Key": JSONBIN_KEY },
+          body: JSON.stringify({ scores }),
+        });
+      } catch(e) {}
+    }
+
+    const COLORS = [
+      { id: "green",  bg: "#00c853", active: "#69f0ae", shadow: "#00c853" },
+      { id: "red",    bg: "#d50000", active: "#ff5252", shadow: "#d50000" },
+      { id: "yellow", bg: "#ffd600", active: "#ffff00", shadow: "#ffd600" },
+      { id: "blue",   bg: "#2962ff", active: "#82b1ff", shadow: "#2962ff" },
+    ];
+    const LAYOUT = {
+      green:  { gridRow: 1, gridColumn: 1, borderRadius: "50% 8px 8px 8px" },
+      red:    { gridRow: 1, gridColumn: 2, borderRadius: "8px 50% 8px 8px" },
+      yellow: { gridRow: 2, gridColumn: 1, borderRadius: "8px 8px 8px 50%" },
+      blue:   { gridRow: 2, gridColumn: 2, borderRadius: "8px 8px 50% 8px" },
+    };
+    const FREQS = { green: 415, red: 310, yellow: 252, blue: 209 };
+    const MEDAL = ["🥇","🥈","🥉"];
+
+    function useSound() {
+      const ctx = useRef(null);
+      const play = useCallback((freq, dur = 0.3) => {
+        try {
+          if (!ctx.current) ctx.current = new (window.AudioContext || window.webkitAudioContext)();
+          const c = ctx.current;
+          const osc = c.createOscillator();
+          const gain = c.createGain();
+          osc.connect(gain); gain.connect(c.destination);
+          osc.frequency.value = freq; osc.type = "sine";
+          gain.gain.setValueAtTime(0.4, c.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.001, c.currentTime + dur);
+          osc.start(); osc.stop(c.currentTime + dur);
+        } catch(e) {}
+      }, []);
+      return { play };
+    }
+
+    function Leaderboard({ scores, loading, currentUser, onClose }) {
+      return (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.93)", zIndex: 100, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "Courier New", padding: 24 }}>
+          <div style={{ width: "100%", maxWidth: 360 }}>
+            <div style={{ textAlign: "center", marginBottom: 24 }}>
+              <div style={{ fontSize: 28, fontWeight: 900, letterSpacing: 6, color: "#fff", textTransform: "uppercase" }}>RANGLISTE</div>
+              <div style={{ fontSize: 10, letterSpacing: 4, color: "#444", marginTop: 4 }}>TOP SPIELER</div>
+            </div>
+            {loading ? (
+              <div style={{ textAlign: "center", padding: 32 }}>
+                <div style={{ width: 32, height: 32, border: "2px solid #222", borderTop: "2px solid #ffd600", borderRadius: "50%", animation: "spin 0.8s linear infinite", margin: "0 auto" }} />
+              </div>
+            ) : scores.length === 0 ? (
+              <div style={{ textAlign: "center", color: "#444", fontSize: 12, letterSpacing: 2, padding: 32 }}>Noch keine Einträge</div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                {scores.slice(0, 10).map((entry, i) => {
+                  const isMe = entry.username === currentUser;
+                  return (
+                    <div key={entry.username} style={{ display: "flex", alignItems: "center", gap: 12, padding: "10px 16px", background: isMe ? "rgba(255,214,0,0.08)" : "rgba(255,255,255,0.03)", borderRadius: 8, border: isMe ? "1px solid rgba(255,214,0,0.3)" : "1px solid rgba(255,255,255,0.05)" }}>
+                      <div style={{ width: 24, textAlign: "center", fontSize: 16 }}>
+                        {i < 3 ? MEDAL[i] : <span style={{ color: "#333", fontSize: 12 }}>{i + 1}</span>}
+                      </div>
+                      <div style={{ flex: 1, fontSize: 13, color: isMe ? "#ffd600" : "#aaa", letterSpacing: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.username}</div>
+                      <div style={{ fontSize: 16, fontWeight: 900, color: isMe ? "#ffd600" : "#fff" }}>{entry.score}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <button onClick={onClose} style={{ marginTop: 28, width: "100%", padding: "14px", background: "transparent", border: "1px solid #333", borderRadius: 8, color: "#666", fontSize: 11, letterSpacing: 4, textTransform: "uppercase", cursor: "pointer" }}>
+              Schließen
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      const [user, setUser] = useState(null);
+      const [authState, setAuthState] = useState("loading");
+      const [sequence, setSequence] = useState([]);
+      const [playerIndex, setPlayerIndex] = useState(0);
+      const [phase, setPhase] = useState("idle");
+      const [activeColor, setActiveColor] = useState(null);
+      const [score, setScore] = useState(0);
+      const [highScore, setHighScore] = useState(0);
+      const [flash, setFlash] = useState(null);
+      const [showLeaderboard, setShowLeaderboard] = useState(false);
+      const [leaderboard, setLeaderboard] = useState([]);
+      const [leaderboardLoading, setLeaderboardLoading] = useState(true);
+      const { play } = useSound();
+
+      const signIn = useCallback(() => {
+        setAuthState("signing_in");
+        // Wait for Pi SDK to be fully ready
+        const tryAuth = (attempts) => {
+          if (typeof Pi === "undefined" || typeof Pi.authenticate !== "function") {
+            if (attempts > 10) { setAuthState("error"); return; }
+            setTimeout(() => tryAuth(attempts + 1), 500);
+            return;
+          }
+          try {
+            Pi.init({ version: "2.0", sandbox: false });
+          } catch(e) {}
+          Pi.authenticate(["username"], () => {})
+            .then((auth) => { setUser(auth.user); setAuthState("ready"); })
+            .catch(() => setAuthState("error"));
+        };
+        tryAuth(0);
+      }, []);
+
+      useEffect(() => { signIn(); }, []);
+
+      // Load leaderboard once after login
+      useEffect(() => {
+        if (authState === "ready") {
+          setLeaderboardLoading(true);
+          fetchLeaderboard().then(scores => {
+            if (scores !== null) setLeaderboard(scores);
+            setLeaderboardLoading(false);
+          });
+        }
+      }, [authState]);
+
+      const lightUp = useCallback((colorId, dur = 400) => {
+        return new Promise((res) => {
+          setActiveColor(colorId);
+          play(FREQS[colorId], dur / 1000);
+          setTimeout(() => { setActiveColor(null); res(); }, dur);
+        });
+      }, [play]);
+
+      const showSequence = useCallback(async (seq) => {
+        setPhase("showing");
+        await new Promise(r => setTimeout(r, 500));
+        for (const color of seq) {
+          await lightUp(color, 450);
+          await new Promise(r => setTimeout(r, 200));
+        }
+        setPhase("input");
+        setPlayerIndex(0);
+      }, [lightUp]);
+
+      const startGame = useCallback(async () => {
+        const first = COLORS[Math.floor(Math.random() * 4)].id;
+        setSequence([first]);
+        setScore(0);
+        setFlash(null);
+        await showSequence([first]);
+      }, [showSequence]);
+
+      const handlePress = useCallback(async (colorId) => {
+        if (phase !== "input") return;
+        await lightUp(colorId, 300);
+        const expected = sequence[playerIndex];
+        if (colorId !== expected) {
+          play(150, 0.6);
+          setFlash("fail");
+          setPhase("gameover");
+          const finalScore = sequence.length - 1;
+          setHighScore(s => Math.max(s, finalScore));
+          // Update leaderboard locally first, then save to JSONBin
+          if (user && finalScore > 0) {
+            setLeaderboard(prev => {
+              let updated = [...prev];
+              const idx = updated.findIndex(s => s.username === user.username);
+              if (idx >= 0) {
+                if (finalScore > updated[idx].score) {
+                  updated[idx] = { ...updated[idx], score: finalScore };
+                }
+              } else {
+                updated.push({ username: user.username, score: finalScore });
+              }
+              updated = updated.sort((a, b) => b.score - a.score).slice(0, 20);
+              // Save to JSONBin in background
+              saveLeaderboard(updated);
+              return updated;
+            });
+          }
+          return;
+        }
+        const nextIndex = playerIndex + 1;
+        if (nextIndex === sequence.length) {
+          setFlash("success");
+          setScore(sequence.length);
+          await new Promise(r => setTimeout(r, 600));
+          setFlash(null);
+          const next = COLORS[Math.floor(Math.random() * 4)].id;
+          const newSeq = [...sequence, next];
+          setSequence(newSeq);
+          await showSequence(newSeq);
+        } else {
+          setPlayerIndex(nextIndex);
+        }
+      }, [phase, sequence, playerIndex, play, lightUp, showSequence, user]);
+
+      if (authState === "loading" || authState === "signing_in") {
+        return (
+          <div style={{ minHeight: "100vh", background: "#0a0a0f", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20 }}>
+            <div style={{ width: 48, height: 48, border: "3px solid #222", borderTop: "3px solid #ffd600", borderRadius: "50%", animation: "spin 0.8s linear infinite" }} />
+            <div style={{ color: "#444", fontSize: 11, letterSpacing: 4, textTransform: "uppercase", fontFamily: "Courier New" }}>Signing in with Pi...</div>
+          </div>
+        );
+      }
+
+      if (authState === "error") {
+        return (
+          <div style={{ minHeight: "100vh", background: "#0a0a0f", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20, padding: 32, fontFamily: "Courier New" }}>
+            <div style={{ fontSize: 40 }}>⚠️</div>
+            <div style={{ color: "#fff", fontSize: 15, textAlign: "center" }}>Pi sign-in failed.</div>
+            <div style={{ color: "#444", fontSize: 11, textAlign: "center" }}>Please open this app in the Pi Browser.</div>
+            <button onClick={signIn} style={{ marginTop: 8, padding: "12px 32px", background: "#ffd600", border: "none", borderRadius: 8, fontWeight: 900, fontSize: 13, cursor: "pointer", letterSpacing: 2, textTransform: "uppercase" }}>Try Again</button>
+          </div>
+        );
+      }
+
+      return (
+        <div style={{ minHeight: "100vh", background: "#0a0a0f", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "'Courier New', monospace", userSelect: "none" }}>
+          {showLeaderboard && (
+            <Leaderboard scores={leaderboard} loading={leaderboardLoading} currentUser={user?.username} onClose={() => setShowLeaderboard(false)} />
+          )}
+          <div style={{ position: "fixed", top: 0, left: 0, right: 0, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 20px" }}>
+            {user && <div style={{ fontSize: 10, letterSpacing: 2, color: "#333", textTransform: "uppercase" }}>👋 {user.username}</div>}
+            <button onClick={() => setShowLeaderboard(true)} style={{ marginLeft: "auto", background: "transparent", border: "1px solid #222", borderRadius: 6, color: "#444", fontSize: 10, letterSpacing: 2, padding: "6px 12px", cursor: "pointer", textTransform: "uppercase" }}>🏆 Rangliste</button>
+          </div>
+          <div style={{ marginBottom: 32, textAlign: "center" }}>
+            <div style={{ fontSize: 36, fontWeight: 900, letterSpacing: 8, color: "#fff", textTransform: "uppercase", textShadow: "0 0 30px rgba(255,255,255,0.3)" }}>SIMON</div>
+            <div style={{ fontSize: 11, letterSpacing: 6, color: "#555", marginTop: 2 }}>MEMORY GAME</div>
+          </div>
+          <div style={{ display: "flex", gap: 40, marginBottom: 36, fontSize: 13, letterSpacing: 3, color: "#555", textTransform: "uppercase" }}>
+            <div><span>Runde </span><span style={{ color: "#fff", fontSize: 20, fontWeight: 700 }}>{score}</span></div>
+            <div><span>Best </span><span style={{ color: "#ffd600", fontSize: 20, fontWeight: 700 }}>{highScore}</span></div>
+          </div>
+          <div style={{ position: "relative", width: 300, height: 300 }}>
+            <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%, -50%)", width: 80, height: 80, borderRadius: "50%", background: "#0a0a0f", border: "2px solid #222", zIndex: 10, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {phase === "idle" || phase === "gameover" ? (
+                <button onClick={startGame} style={{ width: 60, height: 60, borderRadius: "50%", background: phase === "gameover" ? "#d50000" : "#fff", border: "none", cursor: "pointer", fontSize: 10, fontWeight: 900, letterSpacing: 1, color: phase === "gameover" ? "#fff" : "#0a0a0f", textTransform: "uppercase", boxShadow: phase === "gameover" ? "0 0 20px rgba(213,0,0,0.6)" : "0 0 20px rgba(255,255,255,0.3)" }}>
+                  {phase === "gameover" ? "NEU" : "START"}
+                </button>
+              ) : (
+                <div style={{ fontSize: 22, fontWeight: 900, color: "#fff", textShadow: "0 0 10px rgba(255,255,255,0.5)" }}>
+                  {phase === "showing" ? "👁" : sequence.length - playerIndex}
+                </div>
+              )}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gridTemplateRows: "1fr 1fr", gap: 8, width: "100%", height: "100%" }}>
+              {COLORS.map(color => {
+                const isActive = activeColor === color.id;
+                return (
+                  <button key={color.id} onClick={() => handlePress(color.id)} style={{ gridRow: LAYOUT[color.id].gridRow, gridColumn: LAYOUT[color.id].gridColumn, background: isActive ? color.active : color.bg, borderRadius: LAYOUT[color.id].borderRadius, border: "none", cursor: phase === "input" ? "pointer" : "default", opacity: isActive ? 1 : phase === "input" ? 0.75 : 0.35, transition: "opacity 0.08s, background 0.08s, transform 0.08s, box-shadow 0.08s", transform: isActive ? "scale(0.96)" : "scale(1)", boxShadow: isActive ? ("0 0 40px " + color.shadow + "cc, 0 0 80px " + color.shadow + "55") : phase === "input" ? ("0 4px 20px " + color.shadow + "44") : "none", outline: "none" }} />
+                );
+              })}
+            </div>
+            {flash && (
+              <div style={{ position: "absolute", inset: 0, borderRadius: 8, background: flash === "success" ? "rgba(0,200,83,0.15)" : "rgba(213,0,0,0.15)", border: ("2px solid " + (flash === "success" ? "#00c853" : "#d50000")), pointerEvents: "none", animation: "flashAnim 0.5s ease-out forwards" }} />
+            )}
+          </div>
+          <div style={{ marginTop: 36, height: 32, fontSize: 11, letterSpacing: 4, textTransform: "uppercase", color: phase === "gameover" ? "#d50000" : phase === "showing" ? "#ffd600" : phase === "input" ? "#00c853" : "#333", transition: "color 0.3s" }}>
+            {phase === "idle" && "Drück Start"}
+            {phase === "showing" && "Schau zu..."}
+            {phase === "input" && "Dein Zug!"}
+            {phase === "gameover" && ("Game Over — Runde " + (sequence.length - 1))}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
